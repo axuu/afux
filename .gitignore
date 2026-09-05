@@ -1,0 +1,9 @@
+@.pio
+*.bin
+*.elf
+*.gz
+.esphome
+*.yaml.old
+.DS_Store
+__pycache__/
+secrets.yaml
