@@ -1,0 +1,23 @@
+services:
+  scale-api:
+    build: .
+    restart: unless-stopped
+    init: true
+    expose:
+      - "8080"
+    environment:
+      API_TOKEN: "${API_TOKEN:?Set API_TOKEN}"
+      WEB_USERNAME: "${WEB_USERNAME:-admin}"
+      WEB_PASSWORD: "${WEB_PASSWORD:?Set WEB_PASSWORD}"
+    volumes:
+      - scale-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  scale-data:

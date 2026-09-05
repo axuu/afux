@@ -1,0 +1,9 @@
+.git
+.esphome
+.env
+secrets.yaml
+data
+__pycache__
+*.db
+*.db-shm
+*.db-wal

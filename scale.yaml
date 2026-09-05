@@ -44,6 +44,11 @@ ota:
 logger:
   level: DEBUG
 
+# 每次完成称重后，将原始数据上传到公网服务。
+http_request:
+  timeout: 8s
+  verify_ssl: true
+
 # 蓝牙跟踪：负责广播监听（免连接读取体重）与 GATT 连接
 esp32_ble_tracker:
   scan_parameters:
@@ -65,6 +70,30 @@ sensor:
     accuracy_decimals: 2
     device_class: weight
     force_update: true
+    # ponytail: 当前为 best-effort 上传；确实发生离线丢数时再增加持久队列。
+    on_value:
+      then:
+        - http_request.post:
+            url: !secret measurement_api_url
+            request_headers:
+              Content-Type: application/json
+              X-API-Key: !secret measurement_api_token
+            json: |-
+              root["device_id"] = App.get_name().c_str();
+              root["weight_g"] = static_cast<int32_t>(x * 1000.0f + 0.5f);
+              root["impedance_raw"] = static_cast<uint16_t>(id(scale_impedance_raw).state);
+            on_response:
+              then:
+                - lambda: |-
+                    if (response->status_code >= 200 && response->status_code < 300) {
+                      ESP_LOGI("measurement_upload", "Measurement uploaded");
+                    } else {
+                      ESP_LOGW("measurement_upload", "Upload rejected: HTTP %d", response->status_code);
+                    }
+            on_error:
+              then:
+                - lambda: |-
+                    ESP_LOGW("measurement_upload", "Upload failed: network error");
     # 稳定标志出现且重量持续不变后，每次上秤只发布一次。
     settle_time: 2s
     # 协议中的原始 16 位值，未确认缩放关系，因此不标 Ω。

@@ -7,3 +7,8 @@
 .DS_Store
 __pycache__/
 secrets.yaml
+.env
+data/
+*.db
+*.db-shm
+*.db-wal
