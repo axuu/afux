@@ -27,7 +27,7 @@ class ServerTest(unittest.TestCase):
         server.API_TOKEN = "test-api-token-with-safe-length"
         server.initialize_database()
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.ScaleHandler)
-        self.httpd.index_html = server.render_index(TEST_PROFILE)
+        self.httpd.index_html = server.INDEX_TEMPLATE
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
 
@@ -58,8 +58,8 @@ class ServerTest(unittest.TestCase):
     def test_public_read_protected_write_and_idempotency(self):
         status, page = self.request("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn("测试用户的身体记录", page)
-        for private_field in ("height_cm", "birth_year", "birth_month", "sex", "1990"):
+        self.assertIn("Afux 体重记录", page)
+        for private_field in ("测试用户", "height_cm", "birth_year", "birth_month", "sex", "1990"):
             self.assertNotIn(private_field, page)
 
         status, listing = self.request("GET", "/api/measurements")

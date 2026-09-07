@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import html
 import hmac
 import json
 import os
@@ -67,11 +66,6 @@ def load_profile():
 def profile_age(profile, at=None):
     at = at or datetime.now(timezone.utc)
     return at.year - profile["birth_year"] - (at.month < profile["birth_month"])
-
-
-def render_index(profile):
-    nickname = html.escape(profile["nickname"], quote=True).encode()
-    return INDEX_TEMPLATE.replace(b"{{PROFILE_NICKNAME}}", nickname)
 
 
 class ClientError(ValueError):
@@ -319,7 +313,7 @@ def main():
     initialize_database()
     server = ThreadingHTTPServer((HOST, PORT), ScaleHandler)
     server.daemon_threads = True
-    server.index_html = render_index(profile)
+    server.index_html = INDEX_TEMPLATE
     server.profile = profile | {"age": profile_age(profile)}
     print(f"AFU Scale listening on http://{HOST}:{PORT}; database={DB_PATH}", flush=True)
     try:

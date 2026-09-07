@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>{{PROFILE_NICKNAME}}的身体记录</title>
+  <title>Afux 体重记录</title>
   <style>
     :root {
       --mist: #e8f0f0;
@@ -46,23 +46,6 @@
       justify-content: space-between;
       gap: 24px;
       margin-bottom: 24px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
-    .brand-mark {
-      display: grid;
-      width: 52px;
-      height: 52px;
-      place-items: center;
-      border: 1px solid var(--ink);
-      border-radius: 50%;
-      font: 700 13px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
-      letter-spacing: 0.12em;
     }
 
     h1, h2, p { margin: 0; }
@@ -234,10 +217,8 @@
     td.weight-cell { color: var(--teal); font-size: 16px; font-weight: 700; }
 
     footer {
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
       padding: 18px 4px 0;
+      text-align: right;
     }
 
     @media (max-width: 800px) {
@@ -250,11 +231,9 @@
     }
 
     @media (max-width: 520px) {
-      .brand-mark { width: 44px; height: 44px; }
       .refresh { padding-inline: 14px; }
       .facts { grid-template-columns: 1fr 1fr; }
       .facts div:last-child { grid-column: 1 / -1; }
-      footer { flex-direction: column; }
     }
 
     @media (prefers-reduced-motion: no-preference) {
@@ -266,13 +245,7 @@
 <body>
   <main class="shell">
     <header>
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">AFU</span>
-        <div>
-          <p class="eyebrow">Personal body profile</p>
-          <h1>{{PROFILE_NICKNAME}}的身体记录</h1>
-        </div>
-      </div>
+      <h1>Afux 体重记录</h1>
       <button class="refresh" id="refresh" type="button">刷新数据</button>
     </header>
 
@@ -319,7 +292,7 @@
       </section>
     </div>
 
-    <footer><span>重量由设备原始克数换算</span><span id="updated">尚未刷新</span></footer>
+    <footer><span id="updated">尚未刷新</span></footer>
   </main>
 
   <script>
