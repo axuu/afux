@@ -28,6 +28,7 @@ class ServerTest(unittest.TestCase):
         server.initialize_database()
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.ScaleHandler)
         self.httpd.index_html = server.INDEX_TEMPLATE
+        self.httpd.profile = TEST_PROFILE
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
 
@@ -110,6 +111,14 @@ class ServerTest(unittest.TestCase):
         self.assertCountEqual(
             [row["weight_g"] for row in listing["measurements"]], [78100, 78350]
         )
+        saved = next(row for row in listing["measurements"] if row["measurement_id"] == "scale-1-100")
+        self.assertEqual((saved["bmi"], saved["body_fat_pct_estimate"]), (24.2, 25.8))
+        without_impedance = server.estimate_body_metrics(
+            measurement | {"impedance_raw": 0}, TEST_PROFILE
+        )
+        female = server.estimate_body_metrics(measurement, TEST_PROFILE | {"sex": "female"})
+        self.assertIsNone(without_impedance["body_fat_pct_estimate"])
+        self.assertEqual(female["body_fat_pct_estimate"], 31.1)
 
         self.assertEqual(server.profile_age(TEST_PROFILE, datetime(2026, 5, 31, tzinfo=timezone.utc)), 35)
         self.assertEqual(server.profile_age(TEST_PROFILE, datetime(2026, 6, 1, tzinfo=timezone.utc)), 36)

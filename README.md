@@ -2,7 +2,7 @@
 
 用 ESP32 通过 BLE 读取 AFU-WL-TZ-A1 类体脂秤，并把每次称重的最终体重和原始阻抗发送到 Home Assistant 与自托管数据服务。
 
-组件只采集设备数据：不在设备端推算 BMI、体脂率、水分率、肌肉量、蛋白质或骨量。数据服务按单人档案运行；画像参数通过服务端环境变量配置，不写入测量记录或下发给浏览器。
+组件只采集设备数据，不在设备端推算身体指标。数据服务按单人档案运行，在查询时计算 BMI 和估算体脂率；画像参数通过服务端环境变量配置，不写入测量记录或直接下发给浏览器。
 
 协议解析参考 [smart-body-scale-android](https://github.com/maoziban/smart-body-scale-android)。
 
@@ -14,6 +14,8 @@
 | `原始阻抗` | 报文字节 8–9 的无符号 16 位原始值 | 未知 |
 
 原始阻抗不标记为 Ω，因为目前没有可靠依据确认原厂的缩放和校准关系。
+
+网页按参考 App 的 [BodyAlgorithm](https://github.com/maoziban/smart-body-scale-android/blob/main/app/src/main/java/com/example/dianzicheng/domain/BodyAlgorithm.kt) 计算并明确标注“估算体脂率”；阻抗为 0 时不计算。由于原始阻抗的缩放和算法都未经原厂校准确认，该结果只适合观察趋势，不作为医学结论。
 
 一次称重按以下规则发布：
 
@@ -67,7 +69,7 @@ https://scale.example.com:8080
 
 这里的 `8080` 是容器内部端口，公网仍由 Coolify 使用标准 HTTPS 端口。部署后访问 `/healthz`，应返回 `{"status":"ok"}`。Compose 中的 `scale-data` volume 会保留 SQLite 数据，不要另外创建重复挂载。
 
-浏览器可直接打开服务地址；读取页面和查询接口公开，只有写入接口需要 token。昵称、身高、出生年月、性别及后端计算的年龄都不会下发到浏览器。
+浏览器可直接打开服务地址；读取页面和查询接口公开，只有写入接口需要 token。昵称、身高、出生年月、性别及后端计算的年龄都不会直接下发到浏览器；公开查询结果包含由这些参数推算的 BMI 和估算体脂率。
 
 Compose 已为 Coolify 的 Traefik 配置每个来源平均每分钟 60 次、突发 20 次的限流，并将容器限制为 0.5 CPU、128 MB 内存和 64 个 PID。
 
@@ -173,7 +175,7 @@ weight_g
 impedance_raw
 ```
 
-其中时间与测量 ID 默认由服务端生成；个人参数和派生指标仍由消费端管理。
+其中时间与测量 ID 默认由服务端生成。BMI 和估算体脂率不写入数据库，由服务端查询时动态计算并添加为 `bmi` 和 `body_fat_pct_estimate`。
 
 ## 排查
 

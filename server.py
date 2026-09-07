@@ -68,6 +68,26 @@ def profile_age(profile, at=None):
     return at.year - profile["birth_year"] - (at.month < profile["birth_month"])
 
 
+def estimate_body_metrics(measurement, profile):
+    weight_kg = measurement["weight_g"] / 1000
+    height_m = profile["height_cm"] / 100
+    bmi = weight_kg / height_m**2
+    body_fat_pct = None
+    if measurement["impedance_raw"] > 0:
+        measured_at = datetime.fromisoformat(measurement["measured_at"].replace("Z", "+00:00"))
+        age = max(1, min(120, profile_age(profile, measured_at)))
+        # ponytail: matches the reference app's heuristic; replace when a calibrated device formula is known.
+        if profile["sex"] == "male":
+            body_fat_pct = 0.18 * bmi + 0.012 * age + 0.018 * measurement["impedance_raw"] - 3.2
+        else:
+            body_fat_pct = 0.26 * bmi + 0.011 * age + 0.020 * measurement["impedance_raw"] - 2.5
+        body_fat_pct = max(5.0, min(55.0, body_fat_pct))
+    return {
+        "bmi": round(bmi, 1),
+        "body_fat_pct_estimate": None if body_fat_pct is None else round(body_fat_pct, 1),
+    }
+
+
 class ClientError(ValueError):
     def __init__(self, message, status=400):
         super().__init__(message)
@@ -186,7 +206,7 @@ def save_measurement(measurement):
     return saved, cursor.rowcount == 1
 
 
-def list_measurements(limit):
+def list_measurements(limit, profile):
     with connect_database() as database:
         rows = database.execute(
             """
@@ -198,7 +218,7 @@ def list_measurements(limit):
             (limit,),
         ).fetchall()
         total = database.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
-    return [dict(row) for row in rows], total
+    return [dict(row) | estimate_body_metrics(row, profile) for row in rows], total
 
 
 class ScaleHandler(BaseHTTPRequestHandler):
@@ -279,7 +299,7 @@ class ScaleHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json(400, {"error": "limit must be an integer between 1 and 500"})
                 return
-            measurements, total = list_measurements(limit)
+            measurements, total = list_measurements(limit, self.server.profile)
             self.send_json(200, {"measurements": measurements, "total": total})
             return
 
