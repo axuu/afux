@@ -166,7 +166,7 @@
 
     .facts {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 16px;
       margin: 0;
     }
@@ -232,8 +232,6 @@
 
     @media (max-width: 520px) {
       .refresh { padding-inline: 14px; }
-      .facts { grid-template-columns: 1fr 1fr; }
-      .facts div:last-child { grid-column: 1 / -1; }
     }
 
     @media (prefers-reduced-motion: no-preference) {
@@ -259,7 +257,6 @@
         <div class="weight"><strong id="latest-weight">--.--</strong><span>kg</span></div>
         <div class="ruler" aria-hidden="true"></div>
         <dl class="facts">
-          <div><dt>原始阻抗</dt><dd class="data" id="latest-impedance">—</dd></div>
           <div><dt>较上次</dt><dd class="data" id="latest-delta">—</dd></div>
           <div><dt>累计记录</dt><dd class="data" id="latest-count">—</dd></div>
         </dl>
@@ -285,7 +282,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>测量时间</th><th>体重</th><th>原始阻抗</th></tr></thead>
+            <thead><tr><th>测量时间</th><th>体重</th></tr></thead>
             <tbody id="history-body"></tbody>
           </table>
         </div>
@@ -297,9 +294,9 @@
 
   <script>
     const elements = Object.fromEntries([
-      "refresh", "status", "latest-time", "latest-weight", "latest-impedance",
-      "latest-delta", "latest-count", "chart", "chart-empty", "range", "total",
-      "history-body", "updated"
+      "refresh", "status", "latest-time", "latest-weight", "latest-delta",
+      "latest-count", "chart", "chart-empty", "range", "total", "history-body",
+      "updated"
     ].map(id => [id, document.getElementById(id)]));
 
     const formatTime = value => new Intl.DateTimeFormat("zh-CN", {
@@ -310,7 +307,6 @@
       if (!rows.length) return;
       const latest = rows[0];
       elements["latest-weight"].textContent = (latest.weight_g / 1000).toFixed(2);
-      elements["latest-impedance"].textContent = latest.impedance_raw;
       elements["latest-count"].textContent = `${total} 次`;
       elements["latest-time"].textContent = formatTime(latest.measured_at);
       if (rows.length > 1) {
@@ -364,7 +360,7 @@
       elements.total.textContent = `${total} 条`;
       const fragment = document.createDocumentFragment();
       for (const row of rows) {
-        const cells = [formatTime(row.measured_at), `${(row.weight_g / 1000).toFixed(2)} kg`, row.impedance_raw];
+        const cells = [formatTime(row.measured_at), `${(row.weight_g / 1000).toFixed(2)} kg`];
         const tr = document.createElement("tr");
         cells.forEach((value, index) => {
           const td = document.createElement("td");

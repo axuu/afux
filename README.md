@@ -30,7 +30,7 @@
 
 - `POST /api/measurements`：接收称重数据
 - `GET /api/measurements`：公开查询最近记录
-- `/`：公开查看档案本人的最新读数、体重趋势和原始历史
+- `/`：公开查看档案本人的最新读数、体重趋势和历史记录
 - SQLite 持久化：数据库位于 Docker volume 的 `/data/measurements.db`
 
 ### Coolify 部署
