@@ -2,7 +2,7 @@
 
 用 ESP32 通过 BLE 读取 AFU-WL-TZ-A1 类体脂秤，并把每次称重的最终体重和原始阻抗发送到 Home Assistant 与自托管数据服务。
 
-组件只采集设备数据：不保存身高、年龄、性别，也不在设备端推算 BMI、体脂率、水分率、肌肉量、蛋白质或骨量。派生指标和个人参数留给消费端处理。
+组件只采集设备数据：不在设备端推算 BMI、体脂率、水分率、肌肉量、蛋白质或骨量。数据服务按单人档案运行；画像参数通过服务端环境变量配置，不写入测量记录或下发给浏览器。
 
 协议解析参考 [smart-body-scale-android](https://github.com/maoziban/smart-body-scale-android)。
 
@@ -29,8 +29,8 @@
 仓库内置一个零依赖 Python 服务，同时提供：
 
 - `POST /api/measurements`：接收称重数据
-- `GET /api/measurements`：查询最近记录
-- `/`：查看最新读数、体重趋势和原始历史
+- `GET /api/measurements`：公开查询最近记录
+- `/`：公开查看档案本人的最新读数、体重趋势和原始历史
 - SQLite 持久化：数据库位于 Docker volume 的 `/data/measurements.db`
 
 ### Coolify 部署
@@ -42,19 +42,21 @@
 - Base Directory：`/`
 - Docker Compose Location：`/compose.yaml`
 
-私有仓库使用 GitHub App 或 Deploy Key。先在本机生成两个随机值：
+私有仓库使用 GitHub App 或 Deploy Key。先在本机生成随机 token：
 
 ```bash
 openssl rand -hex 32
-openssl rand -base64 24
 ```
 
-然后在 Coolify 的 Environment Variables 中填写，三个变量都只启用 Runtime Variable：
+然后在 Coolify 的 Environment Variables 中填写以下变量，只启用 Runtime Variable，不启用 Build Variable：
 
 ```dotenv
 API_TOKEN=第一条命令的输出
-WEB_USERNAME=admin
-WEB_PASSWORD=第二条命令的输出
+PROFILE_NICKNAME=你的昵称
+PROFILE_HEIGHT_CM=身高厘米整数
+PROFILE_BIRTH_YEAR=四位出生年
+PROFILE_BIRTH_MONTH=出生月份整数
+PROFILE_SEX=male 或 female
 ```
 
 最后为 `scale-api` 服务设置域名：
@@ -65,7 +67,9 @@ https://scale.example.com:8080
 
 这里的 `8080` 是容器内部端口，公网仍由 Coolify 使用标准 HTTPS 端口。部署后访问 `/healthz`，应返回 `{"status":"ok"}`。Compose 中的 `scale-data` volume 会保留 SQLite 数据，不要另外创建重复挂载。
 
-浏览器打开服务地址后，使用 Coolify 中的 `WEB_USERNAME` 和 `WEB_PASSWORD` 登录。
+浏览器可直接打开服务地址；读取页面和查询接口公开，只有写入接口需要 token。页面只使用昵称，身高、出生年月、性别及后端计算的年龄不会下发到浏览器。
+
+Compose 已为 Coolify 的 Traefik 配置每个来源平均每分钟 60 次、突发 20 次的限流，并将容器限制为 0.5 CPU、128 MB 内存和 64 个 PID。
 
 写入接口使用 `X-API-Key`：
 

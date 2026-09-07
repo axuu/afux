@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-import base64
-import binascii
+import html
 import hmac
 import json
 import os
@@ -18,10 +17,61 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 DB_PATH = os.getenv("DB_PATH", "/data/measurements.db")
 API_TOKEN = os.getenv("API_TOKEN", "")
-WEB_USERNAME = os.getenv("WEB_USERNAME", "admin")
-WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
-INDEX_HTML = Path(__file__).with_name("index.html").read_bytes()
 MAX_BODY_BYTES = 16 * 1024
+REQUEST_TIMEOUT_SECONDS = 10
+INDEX_TEMPLATE = Path(__file__).with_name("index.html").read_bytes()
+
+
+def load_profile():
+    names = (
+        "PROFILE_NICKNAME",
+        "PROFILE_HEIGHT_CM",
+        "PROFILE_BIRTH_YEAR",
+        "PROFILE_BIRTH_MONTH",
+        "PROFILE_SEX",
+    )
+    missing = [name for name in names if not os.getenv(name)]
+    if missing:
+        raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
+
+    nickname = os.environ["PROFILE_NICKNAME"].strip()
+    sex = os.environ["PROFILE_SEX"].strip().lower()
+    try:
+        height_cm = int(os.environ["PROFILE_HEIGHT_CM"])
+        birth_year = int(os.environ["PROFILE_BIRTH_YEAR"])
+        birth_month = int(os.environ["PROFILE_BIRTH_MONTH"])
+    except ValueError as error:
+        raise SystemExit("PROFILE_HEIGHT_CM, PROFILE_BIRTH_YEAR and PROFILE_BIRTH_MONTH must be integers") from error
+
+    now = datetime.now(timezone.utc)
+    if not nickname or len(nickname) > 64 or any(ord(character) < 32 for character in nickname):
+        raise SystemExit("PROFILE_NICKNAME must be 1-64 characters without control characters")
+    if not 50 <= height_cm <= 250:
+        raise SystemExit("PROFILE_HEIGHT_CM must be between 50 and 250")
+    if not now.year - 120 <= birth_year <= now.year or (birth_year, birth_month) > (now.year, now.month):
+        raise SystemExit("PROFILE_BIRTH_YEAR and PROFILE_BIRTH_MONTH must describe a date within the last 120 years")
+    if not 1 <= birth_month <= 12:
+        raise SystemExit("PROFILE_BIRTH_MONTH must be between 1 and 12")
+    if sex not in {"male", "female"}:
+        raise SystemExit("PROFILE_SEX must be male or female")
+
+    return {
+        "nickname": nickname,
+        "height_cm": height_cm,
+        "birth_year": birth_year,
+        "birth_month": birth_month,
+        "sex": sex,
+    }
+
+
+def profile_age(profile, at=None):
+    at = at or datetime.now(timezone.utc)
+    return at.year - profile["birth_year"] - (at.month < profile["birth_month"])
+
+
+def render_index(profile):
+    nickname = html.escape(profile["nickname"], quote=True).encode()
+    return INDEX_TEMPLATE.replace(b"{{PROFILE_NICKNAME}}", nickname)
 
 
 class ClientError(ValueError):
@@ -158,9 +208,13 @@ def list_measurements(limit):
 
 
 class ScaleHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    protocol_version = "HTTP/1.0"
     server_version = "AFUScale/1.0"
     sys_version = ""
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(REQUEST_TIMEOUT_SECONDS)
 
     def send_json(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
@@ -171,29 +225,6 @@ class ScaleHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
-
-    def web_authorized(self):
-        header = self.headers.get("Authorization", "")
-        if not header.startswith("Basic "):
-            return False
-        try:
-            supplied = base64.b64decode(header[6:], validate=True).decode("utf-8")
-        except (binascii.Error, UnicodeDecodeError):
-            return False
-        return hmac.compare_digest(supplied, f"{WEB_USERNAME}:{WEB_PASSWORD}")
-
-    def require_web_auth(self):
-        if self.web_authorized():
-            return True
-        body = b"Authentication required"
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="AFU Scale", charset="UTF-8"')
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-        return False
 
     def read_json(self):
         if self.headers.get_content_type() != "application/json":
@@ -228,13 +259,11 @@ class ScaleHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if not self.require_web_auth():
-            return
-
         if parsed.path == "/":
+            body = self.server.index_html
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(INDEX_HTML)))
+            self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
@@ -245,7 +274,7 @@ class ScaleHandler(BaseHTTPRequestHandler):
                 "connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
             )
             self.end_headers()
-            self.wfile.write(INDEX_HTML)
+            self.wfile.write(body)
             return
 
         if parsed.path == "/api/measurements":
@@ -267,6 +296,7 @@ class ScaleHandler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
             return
         if not API_TOKEN or not hmac.compare_digest(self.headers.get("X-API-Key", ""), API_TOKEN):
+            self.close_connection = True
             self.send_json(401, {"error": "invalid API token"})
             return
         try:
@@ -282,17 +312,15 @@ class ScaleHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    missing = [name for name, value in (("API_TOKEN", API_TOKEN), ("WEB_PASSWORD", WEB_PASSWORD)) if not value]
-    if missing:
-        raise SystemExit(f"Missing required environment variables: {', '.join(missing)}")
-    if len(API_TOKEN) < 24 or len(WEB_PASSWORD) < 12:
-        raise SystemExit("API_TOKEN must be at least 24 characters and WEB_PASSWORD at least 12")
-    if not WEB_USERNAME or ":" in WEB_USERNAME:
-        raise SystemExit("WEB_USERNAME must be non-empty and cannot contain ':'")
+    if len(API_TOKEN) < 24:
+        raise SystemExit("API_TOKEN must be at least 24 characters")
 
+    profile = load_profile()
     initialize_database()
     server = ThreadingHTTPServer((HOST, PORT), ScaleHandler)
     server.daemon_threads = True
+    server.index_html = render_index(profile)
+    server.profile = profile | {"age": profile_age(profile)}
     print(f"AFU Scale listening on http://{HOST}:{PORT}; database={DB_PATH}", flush=True)
     try:
         server.serve_forever()

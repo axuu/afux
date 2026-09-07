@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>AFU 称重记录</title>
+  <title>{{PROFILE_NICKNAME}}的身体记录</title>
   <style>
     :root {
       --mist: #e8f0f0;
@@ -269,8 +269,8 @@
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">AFU</span>
         <div>
-          <p class="eyebrow">Raw measurement log</p>
-          <h1>称重记录</h1>
+          <p class="eyebrow">Personal body profile</p>
+          <h1>{{PROFILE_NICKNAME}}的身体记录</h1>
         </div>
       </div>
       <button class="refresh" id="refresh" type="button">刷新数据</button>
@@ -288,7 +288,7 @@
         <dl class="facts">
           <div><dt>原始阻抗</dt><dd class="data" id="latest-impedance">—</dd></div>
           <div><dt>较上次</dt><dd class="data" id="latest-delta">—</dd></div>
-          <div><dt>设备</dt><dd id="latest-device">—</dd></div>
+          <div><dt>累计记录</dt><dd class="data" id="latest-count">—</dd></div>
         </dl>
       </section>
 
@@ -307,12 +307,12 @@
 
       <section class="panel history" aria-labelledby="history-title">
         <div class="panel-heading">
-          <div><p class="label">Measurement history</p><h2 id="history-title">原始记录</h2></div>
+          <div><p class="label">Measurement history</p><h2 id="history-title">体重记录</h2></div>
           <output id="total">0 条</output>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>测量时间</th><th>体重</th><th>原始阻抗</th><th>设备</th></tr></thead>
+            <thead><tr><th>测量时间</th><th>体重</th><th>原始阻抗</th></tr></thead>
             <tbody id="history-body"></tbody>
           </table>
         </div>
@@ -325,7 +325,7 @@
   <script>
     const elements = Object.fromEntries([
       "refresh", "status", "latest-time", "latest-weight", "latest-impedance",
-      "latest-delta", "latest-device", "chart", "chart-empty", "range", "total",
+      "latest-delta", "latest-count", "chart", "chart-empty", "range", "total",
       "history-body", "updated"
     ].map(id => [id, document.getElementById(id)]));
 
@@ -333,12 +333,12 @@
       month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
     }).format(new Date(value));
 
-    function renderLatest(rows) {
+    function renderLatest(rows, total) {
       if (!rows.length) return;
       const latest = rows[0];
       elements["latest-weight"].textContent = (latest.weight_g / 1000).toFixed(2);
       elements["latest-impedance"].textContent = latest.impedance_raw;
-      elements["latest-device"].textContent = latest.device_id;
+      elements["latest-count"].textContent = `${total} 次`;
       elements["latest-time"].textContent = formatTime(latest.measured_at);
       if (rows.length > 1) {
         const delta = (latest.weight_g - rows[1].weight_g) / 1000;
@@ -391,7 +391,7 @@
       elements.total.textContent = `${total} 条`;
       const fragment = document.createDocumentFragment();
       for (const row of rows) {
-        const cells = [formatTime(row.measured_at), `${(row.weight_g / 1000).toFixed(2)} kg`, row.impedance_raw, row.device_id];
+        const cells = [formatTime(row.measured_at), `${(row.weight_g / 1000).toFixed(2)} kg`, row.impedance_raw];
         const tr = document.createElement("tr");
         cells.forEach((value, index) => {
           const td = document.createElement("td");
@@ -413,7 +413,7 @@
         const response = await fetch("/api/measurements?limit=365", {cache: "no-store"});
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        renderLatest(data.measurements);
+        renderLatest(data.measurements, data.total);
         renderChart(data.measurements);
         renderHistory(data.measurements, data.total);
         elements.status.textContent = data.measurements.length ? "数据已同步" : "等待第一次称重";
