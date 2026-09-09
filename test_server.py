@@ -60,6 +60,7 @@ class ServerTest(unittest.TestCase):
         status, page = self.request("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn("Afux 体重记录", page)
+        self.assertIn("体重与体脂趋势", page)
         for private_field in ("测试用户", "height_cm", "birth_year", "birth_month", "sex", "1990"):
             self.assertNotIn(private_field, page)
 
