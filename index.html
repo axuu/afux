@@ -219,6 +219,29 @@
       text-align: center;
     }
 
+    .weekly, .activity { grid-column: 1 / -1; }
+    .weekly-body { padding: 18px 26px 24px; }
+    .week-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 18px; }
+    .week-summary strong { color: var(--teal); font: 400 38px/1.2 ui-rounded, "SF Pro Rounded", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+    .week-summary span { color: var(--muted); font-size: 13px; }
+    .weekly-list { display: flex; min-width: 0; overflow-x: auto; gap: 0; margin: 22px 0 0; padding: 16px 0 0; border-top: 1px solid var(--line); list-style: none; }
+    .weekly-list li { flex: 1 0 96px; padding: 0 12px; border-left: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    .weekly-list li:first-child { padding-left: 0; border-left: 0; }
+    .weekly-list time, .weekly-list small { display: block; color: var(--muted); font-size: 12px; }
+    .weekly-list strong { display: block; margin: 5px 0 3px; font-size: 17px; font-weight: 650; }
+    .weekly-list .current strong { color: var(--teal); }
+
+    .activity-body { padding: 22px 26px 28px; }
+    .activity-scroll { overflow-x: auto; padding-bottom: 4px; }
+    .activity-grid { display: flex; width: max-content; gap: 4px; padding-bottom: 27px; }
+    .activity-week { position: relative; display: grid; grid-template-rows: repeat(7, 12px); gap: 4px; }
+    .activity-day, .legend-square { width: 12px; height: 12px; border-radius: 3px; background: rgba(23, 111, 119, 0.11); }
+    .activity-day.recorded, .legend-square.recorded { background: var(--teal); }
+    .activity-day.future { border: 1px solid var(--line); background: transparent; }
+    .month-label { position: absolute; top: 115px; left: 0; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .activity-legend { display: flex; gap: 16px; align-items: center; margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .activity-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
     .history { grid-column: 1 / -1; }
     .table-wrap { overflow-x: auto; padding: 12px 14px 18px; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -240,11 +263,12 @@
       .readout { min-height: 350px; padding: 26px; }
       .weight { margin-top: 54px; }
       .ruler { margin-inline: -26px; }
-      .history { grid-column: auto; }
+      .weekly, .activity, .history { grid-column: auto; }
     }
 
     @media (max-width: 520px) {
       .refresh { padding-inline: 14px; }
+      .activity .panel-heading { align-items: start; flex-direction: column; gap: 7px; }
     }
 
     @media (prefers-reduced-motion: no-preference) {
@@ -293,6 +317,28 @@
         </section>
       </div>
 
+      <section class="panel weekly" aria-labelledby="weekly-title">
+        <div class="panel-heading">
+          <div><p class="label">Weekly average</p><h2 id="weekly-title">7 日平均体重</h2></div>
+          <output id="week-count">本周 0/7 天</output>
+        </div>
+        <div class="weekly-body">
+          <div class="week-summary"><strong id="week-average">—</strong><span id="week-change">周一至周日 · 按有记录的日期平均</span></div>
+          <ol class="weekly-list" id="weekly-list" aria-label="最近 8 个自然周的平均体重"></ol>
+        </div>
+      </section>
+
+      <section class="panel activity" aria-labelledby="activity-title">
+        <div class="panel-heading">
+          <div><p class="label">Daily activity</p><h2 id="activity-title">称重日历</h2></div>
+          <output id="activity-total">最近 53 周</output>
+        </div>
+        <div class="activity-body">
+          <div class="activity-scroll"><div class="activity-grid" id="activity-grid" aria-hidden="true"></div></div>
+          <div class="activity-legend"><span><i class="legend-square recorded" aria-hidden="true"></i>有记录</span><span><i class="legend-square" aria-hidden="true"></i>无记录</span></div>
+        </div>
+      </section>
+
       <section class="panel history" aria-labelledby="history-title">
         <div class="panel-heading">
           <div><p class="label">Measurement history</p><h2 id="history-title">体重记录</h2></div>
@@ -313,7 +359,9 @@
   <script>
     const elements = Object.fromEntries([
       "refresh", "status", "latest-time", "latest-weight", "latest-delta",
-      "latest-count", "chart", "chart-empty", "total", "history-body", "updated"
+      "latest-count", "chart", "chart-empty", "week-average", "week-count",
+      "week-change", "weekly-list", "activity-grid", "activity-total",
+      "total", "history-body", "updated"
     ].map(id => [id, document.getElementById(id)]));
 
     const formatTime = value => new Intl.DateTimeFormat("zh-CN", {
@@ -393,6 +441,90 @@
       appendSeries(bodyFat, fatMin, fatMax, "fat");
     }
 
+    function buildWeightCalendar(measurements, today = new Date()) {
+      const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const start = new Date(end);
+      start.setDate(end.getDate() - (end.getDay() + 6) % 7 - 52 * 7);
+      const daily = new Map();
+      for (const row of measurements) {
+        const measured = new Date(row.measured_at);
+        const day = new Date(measured.getFullYear(), measured.getMonth(), measured.getDate());
+        if (day < start || day > end) continue;
+        const entry = daily.get(day.getTime()) || {sum: 0, count: 0};
+        entry.sum += row.weight_g;
+        entry.count += 1;
+        daily.set(day.getTime(), entry);
+      }
+      return Array.from({length: 53}, (_, index) => {
+        const monday = new Date(start);
+        monday.setDate(start.getDate() + index * 7);
+        const days = Array.from({length: 7}, (_, offset) => {
+          const date = new Date(monday);
+          date.setDate(monday.getDate() + offset);
+          const entry = daily.get(date.getTime());
+          return {date, future: date > end, average_g: entry ? entry.sum / entry.count : null};
+        });
+        const recorded = days.filter(day => day.average_g !== null);
+        return {
+          monday, days, count: recorded.length,
+          average_g: recorded.length ? recorded.reduce((sum, day) => sum + day.average_g, 0) / recorded.length : null
+        };
+      });
+    }
+
+    function renderWeightCalendar(measurements) {
+      const weeks = buildWeightCalendar(measurements);
+      const current = weeks.at(-1), previous = weeks.at(-2);
+      const formatWeight = grams => grams === null ? "—" : `${(grams / 1000).toFixed(2)} kg`;
+      const dateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      elements["week-average"].textContent = formatWeight(current.average_g);
+      elements["week-count"].textContent = `本周 ${current.count}/7 天`;
+      const delta = current.average_g !== null && previous.average_g !== null
+        ? `${(current.average_g - previous.average_g) >= 0 ? "+" : ""}${((current.average_g - previous.average_g) / 1000).toFixed(2)} kg`
+        : null;
+      elements["week-change"].textContent = `${delta ? `较上周 ${delta} · ` : ""}周一至周日 · 按有记录的日期平均`;
+
+      const weeklyList = document.createDocumentFragment();
+      for (const [index, week] of weeks.slice(-8).entries()) {
+        const item = document.createElement("li");
+        if (index === 7) item.classList.add("current");
+        const time = document.createElement("time");
+        time.dateTime = dateKey(week.monday);
+        time.textContent = index === 7 ? "本周" : `${week.monday.getMonth() + 1}/${week.monday.getDate()} 起`;
+        const value = document.createElement("strong");
+        value.textContent = formatWeight(week.average_g);
+        const count = document.createElement("small");
+        count.textContent = `${week.count}/7 天`;
+        item.append(time, value, count);
+        weeklyList.append(item);
+      }
+      elements["weekly-list"].replaceChildren(weeklyList);
+
+      const activity = document.createDocumentFragment();
+      for (const [index, week] of weeks.entries()) {
+        const column = document.createElement("div");
+        column.className = "activity-week";
+        for (const day of week.days) {
+          const square = document.createElement("span");
+          square.className = `activity-day${day.future ? " future" : day.average_g !== null ? " recorded" : ""}`;
+          square.title = `${day.date.toLocaleDateString("zh-CN")} · ${day.future ? "未到日期" : day.average_g === null ? "无记录" : `日均 ${formatWeight(day.average_g)}`}`;
+          column.append(square);
+        }
+        const first = week.days.find(day => day.date.getDate() === 1);
+        if (index === 0 || first) {
+          const label = document.createElement("span");
+          label.className = "month-label";
+          label.textContent = `${(first ? first.date : week.monday).getMonth() + 1}月`;
+          column.append(label);
+        }
+        activity.append(column);
+      }
+      const firstRender = !elements["activity-grid"].childElementCount;
+      elements["activity-grid"].replaceChildren(activity);
+      if (firstRender) elements["activity-grid"].parentElement.scrollLeft = elements["activity-grid"].parentElement.scrollWidth;
+      elements["activity-total"].textContent = `最近 53 周 · 已记录 ${weeks.reduce((sum, week) => sum + week.count, 0)} 天`;
+    }
+
     function renderHistory(rows, total) {
       elements.total.textContent = `${total} 条`;
       const fragment = document.createDocumentFragment();
@@ -429,6 +561,7 @@
         const data = await response.json();
         renderLatest(data.measurements, data.total);
         renderChart(data.measurements);
+        renderWeightCalendar(data.activity_measurements);
         renderHistory(data.measurements, data.total);
         elements.status.textContent = data.measurements.length ? "数据已同步" : "等待第一次称重";
         elements.updated.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}`;

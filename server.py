@@ -6,7 +6,7 @@ import os
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -218,7 +218,12 @@ def list_measurements(limit, profile):
             (limit,),
         ).fetchall()
         total = database.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
-    return [dict(row) | estimate_body_metrics(row, profile) for row in rows], total
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=372)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        activity = database.execute(
+            "SELECT measured_at, weight_g FROM measurements WHERE measured_at >= ? ORDER BY measured_at",
+            (cutoff,),
+        ).fetchall()
+    return [dict(row) | estimate_body_metrics(row, profile) for row in rows], total, [dict(row) for row in activity]
 
 
 class ScaleHandler(BaseHTTPRequestHandler):
@@ -299,8 +304,8 @@ class ScaleHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self.send_json(400, {"error": "limit must be an integer between 1 and 500"})
                 return
-            measurements, total = list_measurements(limit, self.server.profile)
-            self.send_json(200, {"measurements": measurements, "total": total})
+            measurements, total, activity = list_measurements(limit, self.server.profile)
+            self.send_json(200, {"measurements": measurements, "total": total, "activity_measurements": activity})
             return
 
         self.send_json(404, {"error": "not found"})

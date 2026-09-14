@@ -109,6 +109,7 @@ class ServerTest(unittest.TestCase):
         status, listing = self.request("GET", "/api/measurements?limit=10")
         self.assertEqual(status, 200)
         self.assertEqual(listing["total"], 2)
+        self.assertIn(78100, [row["weight_g"] for row in listing["activity_measurements"]])
         self.assertCountEqual(
             [row["weight_g"] for row in listing["measurements"]], [78100, 78350]
         )
@@ -123,6 +124,18 @@ class ServerTest(unittest.TestCase):
 
         self.assertEqual(server.profile_age(TEST_PROFILE, datetime(2026, 5, 31, tzinfo=timezone.utc)), 35)
         self.assertEqual(server.profile_age(TEST_PROFILE, datetime(2026, 6, 1, tzinfo=timezone.utc)), 36)
+
+    def test_activity_is_not_capped_by_history_limit(self):
+        measured_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        with server.connect_database() as database:
+            database.executemany(
+                "INSERT INTO measurements VALUES (?, ?, ?, ?, ?, ?)",
+                ((f"weight-{index}", "body-scale", measured_at, measured_at, 78000, 0) for index in range(501)),
+            )
+        status, listing = self.request("GET", "/api/measurements?limit=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(listing["measurements"]), 1)
+        self.assertEqual(len(listing["activity_measurements"]), 501)
 
     def test_profile_environment_and_early_response_connection_close(self):
         environment = {
