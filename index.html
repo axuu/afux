@@ -33,7 +33,7 @@
       font-family: "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
     }
 
-    button { font: inherit; }
+    button, input { font: inherit; }
 
     .shell {
       width: min(1120px, calc(100% - 32px));
@@ -75,9 +75,9 @@
       transition: background 160ms ease, color 160ms ease, transform 160ms ease;
     }
 
-    .refresh:hover { background: var(--ink); color: white; transform: translateY(-1px); }
+    .refresh:hover:not(:disabled) { background: var(--ink); color: white; transform: translateY(-1px); }
     .refresh:focus-visible { outline: 3px solid var(--aqua); outline-offset: 3px; }
-    .refresh:disabled { cursor: wait; opacity: 0.55; transform: none; }
+    .refresh:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
 
     .dashboard {
       display: grid;
@@ -243,10 +243,34 @@
     .activity-legend span { display: inline-flex; align-items: center; gap: 6px; }
 
     .history { grid-column: 1 / -1; }
+    .history-actions, .management-toolbar, .dialog-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .management-panel { padding: 18px 26px 0; }
+    .management-form { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+    .management-form label { display: grid; flex: 1 1 240px; gap: 8px; font-size: 14px; }
+    .management-form input { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; color: var(--ink); background: var(--paper); }
+    .management-form input:focus-visible, input[type="checkbox"]:focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+    .management-hint, .management-status { margin-top: 12px; color: var(--ink); font-size: 13px; line-height: 1.6; }
+    .management-hint { flex-basis: 100%; }
+    .management-status.error { color: var(--fat); }
+    .management-toolbar { padding: 18px 26px 0; }
+    .management-toolbar output { margin-right: auto; color: var(--ink); font-size: 14px; }
+    .management-controls { min-width: 0; margin: 0; padding: 0; border: 0; }
+    .danger { border-color: var(--fat); color: var(--fat); }
+    .danger:hover:not(:disabled) { background: var(--fat); color: white; }
+    .select-cell { display: none; width: 56px; }
+    .history.managing .select-cell { display: table-cell; }
+    .select-target { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+    input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--teal); }
+    dialog { width: min(440px, calc(100% - 32px)); padding: 28px; border: 1px solid var(--line); border-radius: 20px; color: var(--ink); background: var(--paper); box-shadow: var(--shadow); }
+    dialog::backdrop { background: rgba(23, 50, 56, 0.45); }
+    dialog h2 { font-size: 20px; }
+    dialog p { margin: 16px 0 24px; line-height: 1.6; }
+    .dialog-actions { justify-content: flex-end; }
     .table-wrap { overflow-x: auto; padding: 12px 14px 18px; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { padding: 15px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
-    th:nth-child(n+2), td:nth-child(n+2) { text-align: right; }
+    th:nth-child(n+3), td:nth-child(n+3) { text-align: right; }
+    td.select-cell { padding: 0 6px; }
     tbody tr:last-child td { border-bottom: 0; }
     tbody tr:hover { background: rgba(114, 193, 196, 0.08); }
     td.data { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
@@ -269,6 +293,9 @@
     @media (max-width: 520px) {
       .refresh { padding-inline: 14px; }
       .activity .panel-heading { align-items: start; flex-direction: column; gap: 7px; }
+      .history .panel-heading { align-items: start; flex-direction: column; }
+      .history-actions { width: 100%; justify-content: space-between; }
+      .management-toolbar output { flex-basis: 100%; }
     }
 
     @media (prefers-reduced-motion: no-preference) {
@@ -339,45 +366,74 @@
         </div>
       </section>
 
-      <section class="panel history" aria-labelledby="history-title">
+      <section class="panel history" id="history-panel" aria-labelledby="history-title">
         <div class="panel-heading">
           <div><p class="label">Measurement history</p><h2 id="history-title">体重记录</h2></div>
-          <output id="total">0 条</output>
+          <div class="history-actions"><output id="total">0 条</output><button class="refresh" id="manage" type="button" aria-expanded="false" aria-controls="management-panel">管理记录</button></div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>测量时间</th><th>体重</th><th>较上次</th><th>BMI</th><th>估算体脂率</th></tr></thead>
-            <tbody id="history-body"></tbody>
-          </table>
+        <div class="management-panel" id="management-panel" hidden>
+          <form class="management-form" id="management-form">
+            <label>管理密钥<input id="management-key" type="password" required autocomplete="off" aria-describedby="management-hint"></label>
+            <button class="refresh" id="unlock" type="submit">解锁管理</button>
+            <p class="management-hint" id="management-hint">使用部署时设置的 API_TOKEN。密钥仅在本页临时保留，退出管理时清除。</p>
+          </form>
+          <p class="management-status" id="management-status" role="status"></p>
         </div>
+        <fieldset class="management-controls" id="management-controls" aria-label="记录选择和操作">
+          <div class="management-toolbar" id="management-toolbar" hidden>
+            <output id="selected-count" aria-live="polite">未选择记录</output>
+            <button class="refresh danger" id="delete-selected" type="button" disabled>删除所选</button>
+            <button class="refresh" id="undo-delete" type="button" hidden>撤销上次删除</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th class="select-cell" scope="col"><label class="select-target"><input id="select-all" type="checkbox" aria-label="选择当前列表的全部记录"></label></th><th scope="col">测量时间</th><th scope="col">体重</th><th scope="col">较上次</th><th scope="col">BMI</th><th scope="col">估算体脂率</th></tr></thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+        </fieldset>
       </section>
     </div>
 
     <footer><span id="updated">尚未刷新</span></footer>
   </main>
 
+  <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-summary">
+    <form method="dialog">
+      <h2 id="delete-title">删除所选记录？</h2>
+      <p id="delete-summary"></p>
+      <div class="dialog-actions"><button class="refresh" value="cancel" autofocus>取消</button><button class="refresh danger" value="delete">确认删除</button></div>
+    </form>
+  </dialog>
+
   <script>
     const elements = Object.fromEntries([
       "refresh", "status", "latest-time", "latest-weight", "latest-delta",
       "latest-count", "chart", "chart-empty", "week-average", "week-count",
       "week-change", "weekly-list", "activity-grid", "activity-total",
-      "total", "history-body", "updated"
+      "total", "history-body", "updated", "history-panel", "manage", "management-panel",
+      "management-form", "management-key", "management-status", "management-toolbar",
+      "management-controls", "unlock", "selected-count", "delete-selected", "undo-delete",
+      "select-all", "delete-dialog", "delete-summary"
     ].map(id => [id, document.getElementById(id)]));
+
+    let apiKey = "", busy = false;
+    let latestData = {measurements: [], total: 0}, managedData = {measurements: [], total: 0};
+    const selectedIds = new Set();
+    // ponytail: undo covers the last batch in this page; add a recycle bin for older deletions.
+    let lastDeletedIds = [], pendingDeleteIds = [];
 
     const formatTime = value => new Intl.DateTimeFormat("zh-CN", {
       month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
     }).format(new Date(value));
 
     function renderLatest(rows, total) {
-      if (!rows.length) return;
       const latest = rows[0];
-      elements["latest-weight"].textContent = (latest.weight_g / 1000).toFixed(2);
+      elements["latest-weight"].textContent = latest ? (latest.weight_g / 1000).toFixed(2) : "--.--";
       elements["latest-count"].textContent = `${total} 次`;
-      elements["latest-time"].textContent = formatTime(latest.measured_at);
-      if (rows.length > 1) {
-        const delta = (latest.weight_g - rows[1].weight_g) / 1000;
-        elements["latest-delta"].textContent = `${delta > 0 ? "+" : ""}${delta.toFixed(2)} kg`;
-      }
+      elements["latest-time"].textContent = latest ? formatTime(latest.measured_at) : "—";
+      const delta = rows.length > 1 ? (latest.weight_g - rows[1].weight_g) / 1000 : null;
+      elements["latest-delta"].textContent = delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(2)} kg`;
     }
 
     function renderChart(rows) {
@@ -527,6 +583,7 @@
 
     function renderHistory(rows, total) {
       elements.total.textContent = `${total} 条`;
+      elements["history-panel"].classList.toggle("managing", Boolean(apiKey));
       const fragment = document.createDocumentFragment();
       for (const [index, row] of rows.entries()) {
         const previous = rows[index + 1];
@@ -539,6 +596,22 @@
           row.body_fat_pct_estimate === null ? "—" : `${row.body_fat_pct_estimate.toFixed(1)}%`
         ];
         const tr = document.createElement("tr");
+        const selection = document.createElement("td");
+        selection.className = "select-cell";
+        const label = document.createElement("label");
+        label.className = "select-target";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = selectedIds.has(row.measurement_id);
+        checkbox.setAttribute("aria-label", `选择 ${formatTime(row.measured_at)} ${(row.weight_g / 1000).toFixed(2)} kg 的记录`);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) selectedIds.add(row.measurement_id);
+          else selectedIds.delete(row.measurement_id);
+          updateManagementControls();
+        });
+        label.append(checkbox);
+        selection.append(label);
+        tr.append(selection);
         cells.forEach((value, index) => {
           const td = document.createElement("td");
           td.textContent = value;
@@ -548,10 +621,78 @@
         });
         fragment.append(tr);
       }
+      if (!rows.length) {
+        const tr = document.createElement("tr"), td = document.createElement("td");
+        td.colSpan = 6;
+        td.textContent = "暂无可显示的记录。";
+        tr.append(td);
+        fragment.append(tr);
+      }
       elements["history-body"].replaceChildren(fragment);
+      updateManagementControls();
+    }
+
+    function updateManagementControls() {
+      const count = selectedIds.size, total = managedData.measurements.length;
+      elements["selected-count"].textContent = count ? `已选择 ${count} 条` : "勾选需要删除的记录";
+      elements["delete-selected"].textContent = count ? `删除 ${count} 条` : "删除所选";
+      elements["delete-selected"].disabled = busy || !count;
+      elements["select-all"].checked = total > 0 && count === total;
+      elements["select-all"].indeterminate = count > 0 && count < total;
+      elements["undo-delete"].hidden = !lastDeletedIds.length;
+      elements["management-controls"].disabled = busy;
+      elements.manage.disabled = busy;
+      elements.unlock.disabled = busy;
+    }
+
+    function managementStatus(message, error = false) {
+      elements["management-status"].textContent = message;
+      elements["management-status"].classList.toggle("error", error);
+    }
+
+    async function managementRequest(path, ids = null, key = apiKey) {
+      const response = await fetch(path, {
+        method: ids ? "POST" : "GET", cache: "no-store",
+        headers: {"X-API-Key": key, ...(ids ? {"Content-Type": "application/json"} : {})},
+        ...(ids ? {body: JSON.stringify({measurement_ids: ids})} : {})
+      });
+      if (!response.ok) throw new Error(response.status === 401 ? "管理密钥不正确或已失效，请退出管理后重新输入。" : "操作失败，请稍后重试。");
+      return response.json();
+    }
+
+    async function loadManagedRecords(key = apiKey) {
+      return managementRequest("/api/measurements?limit=500&include_excluded=1", null, key);
+    }
+
+    function showManagedRecords(data) {
+      managedData = data;
+      const available = new Set(data.measurements.map(row => row.measurement_id));
+      for (const id of selectedIds) if (!available.has(id)) selectedIds.delete(id);
+      renderHistory(data.measurements, data.total);
+    }
+
+    async function changeRecords(action, ids) {
+      if (busy || !apiKey || !ids.length) return;
+      busy = true;
+      updateManagementControls();
+      managementStatus(action === "delete" ? "正在删除所选记录…" : "正在恢复记录…");
+      try {
+        const result = await managementRequest(`/api/measurements/${action}`, ids);
+        if (action === "delete" && result.measurement_ids.length) lastDeletedIds = result.measurement_ids;
+        if (action === "restore") lastDeletedIds = [];
+        selectedIds.clear();
+        managementStatus(action === "delete" ? result.deleted ? `已删除 ${result.deleted} 条，可撤销上次删除。` : "所选记录已经移除。" : `已恢复 ${result.restored} 条。`);
+      } catch (error) {
+        managementStatus(error instanceof TypeError ? "未能确认操作结果，请刷新数据后核对记录。" : error.message, true);
+      } finally {
+        busy = false;
+        updateManagementControls();
+        await load();
+      }
     }
 
     async function load() {
+      if (busy) return;
       elements.refresh.disabled = true;
       elements.status.textContent = "正在读取";
       elements.status.classList.remove("error");
@@ -559,10 +700,19 @@
         const response = await fetch("/api/measurements?limit=365", {cache: "no-store"});
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
+        latestData = data;
         renderLatest(data.measurements, data.total);
         renderChart(data.measurements);
         renderWeightCalendar(data.activity_measurements);
-        renderHistory(data.measurements, data.total);
+        if (apiKey) {
+          try {
+            const key = apiKey;
+            const managed = await loadManagedRecords(key);
+            if (apiKey === key) showManagedRecords(managed);
+          } catch (error) {
+            managementStatus(error.message, true);
+          }
+        } else renderHistory(data.measurements, data.total);
         elements.status.textContent = data.measurements.length ? "数据已同步" : "等待第一次称重";
         elements.updated.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit"})}`;
       } catch (error) {
@@ -572,6 +722,61 @@
         elements.refresh.disabled = false;
       }
     }
+
+    elements.manage.addEventListener("click", () => {
+      const opening = elements["management-panel"].hidden;
+      elements["management-panel"].hidden = !opening;
+      elements.manage.textContent = opening ? "退出管理" : "管理记录";
+      elements.manage.setAttribute("aria-expanded", String(opening));
+      apiKey = "";
+      selectedIds.clear();
+      managedData = {measurements: [], total: 0};
+      elements["management-form"].hidden = false;
+      elements["management-toolbar"].hidden = true;
+      elements["management-key"].value = "";
+      managementStatus("");
+      renderHistory(latestData.measurements, latestData.total);
+      if (opening) elements["management-key"].focus();
+    });
+
+    elements["management-form"].addEventListener("submit", async event => {
+      event.preventDefault();
+      if (busy) return;
+      busy = true;
+      updateManagementControls();
+      managementStatus("正在验证密钥…");
+      try {
+        const key = elements["management-key"].value.trim();
+        const data = await loadManagedRecords(key);
+        apiKey = key;
+        elements["management-key"].value = "";
+        elements["management-form"].hidden = true;
+        elements["management-toolbar"].hidden = false;
+        showManagedRecords(data);
+        managementStatus(`管理模式显示最近 ${data.measurements.length} 条记录，包含体重范围外的称重。`);
+      } catch (error) {
+        managementStatus(error.message, true);
+      } finally {
+        busy = false;
+        updateManagementControls();
+      }
+    });
+
+    elements["select-all"].addEventListener("change", () => {
+      selectedIds.clear();
+      if (elements["select-all"].checked) for (const row of managedData.measurements) selectedIds.add(row.measurement_id);
+      renderHistory(managedData.measurements, managedData.total);
+    });
+    elements["delete-selected"].addEventListener("click", () => {
+      pendingDeleteIds = [...selectedIds];
+      elements["delete-summary"].textContent = `这 ${pendingDeleteIds.length} 条记录将从历史和统计中移除。删除后可以撤销最近一次操作。`;
+      elements["delete-dialog"].returnValue = "";
+      elements["delete-dialog"].showModal();
+    });
+    elements["delete-dialog"].addEventListener("close", () => {
+      if (elements["delete-dialog"].returnValue === "delete") changeRecords("delete", pendingDeleteIds);
+    });
+    elements["undo-delete"].addEventListener("click", () => changeRecords("restore", lastDeletedIds));
 
     elements.refresh.addEventListener("click", load);
     load();

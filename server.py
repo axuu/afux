@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -16,7 +17,7 @@ HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 DB_PATH = os.getenv("DB_PATH", "/data/measurements.db")
 API_TOKEN = os.getenv("API_TOKEN", "")
-MAX_BODY_BYTES = 16 * 1024
+MAX_BODY_BYTES = 128 * 1024
 REQUEST_TIMEOUT_SECONDS = 10
 INDEX_TEMPLATE = Path(__file__).with_name("index.html").read_bytes()
 
@@ -54,13 +55,29 @@ def load_profile():
     if sex not in {"male", "female"}:
         raise SystemExit("PROFILE_SEX must be male or female")
 
-    return {
+    profile = {
         "nickname": nickname,
         "height_cm": height_cm,
         "birth_year": birth_year,
         "birth_month": birth_month,
         "sex": sex,
     }
+    for name, field in (
+        ("PROFILE_WEIGHT_MIN_KG", "weight_min_g"),
+        ("PROFILE_WEIGHT_MAX_KG", "weight_max_g"),
+    ):
+        value = os.getenv(name)
+        if value:
+            try:
+                grams = Decimal(value) * 1000
+                if not grams.is_finite() or not 1 <= grams <= 500_000 or grams != int(grams):
+                    raise ValueError
+                profile[field] = int(grams)
+            except (InvalidOperation, ValueError, OverflowError) as error:
+                raise SystemExit(f"{name} must be between 0.001 and 500 kg in increments of 0.001 kg") from error
+    if profile.get("weight_min_g", 1) > profile.get("weight_max_g", 500_000):
+        raise SystemExit("PROFILE_WEIGHT_MIN_KG must not exceed PROFILE_WEIGHT_MAX_KG")
+    return profile
 
 
 def profile_age(profile, at=None):
@@ -152,6 +169,15 @@ def validate_measurement(payload):
     }
 
 
+def validate_measurement_ids(payload):
+    if not isinstance(payload, dict) or set(payload) != {"measurement_ids"}:
+        raise ClientError("request body must contain only measurement_ids")
+    ids = payload["measurement_ids"]
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 500:
+        raise ClientError("measurement_ids must contain 1-500 IDs")
+    return list(dict.fromkeys(require_text({"measurement_id": value}, "measurement_id", 128) for value in ids))
+
+
 def connect_database():
     database = sqlite3.connect(DB_PATH, timeout=5)
     database.row_factory = sqlite3.Row
@@ -170,10 +196,13 @@ def initialize_database():
                 measured_at TEXT NOT NULL,
                 received_at TEXT NOT NULL,
                 weight_g INTEGER NOT NULL CHECK (weight_g BETWEEN 1 AND 500000),
-                impedance_raw INTEGER NOT NULL CHECK (impedance_raw BETWEEN 0 AND 65535)
+                impedance_raw INTEGER NOT NULL CHECK (impedance_raw BETWEEN 0 AND 65535),
+                deleted_at TEXT
             )
             """
         )
+        if "deleted_at" not in {column["name"] for column in database.execute("PRAGMA table_info(measurements)")}:
+            database.execute("ALTER TABLE measurements ADD COLUMN deleted_at TEXT")
         database.execute(
             "CREATE INDEX IF NOT EXISTS measurements_measured_at ON measurements(measured_at DESC)"
         )
@@ -195,7 +224,7 @@ def save_measurement(measurement):
             values,
         )
         row = database.execute(
-            "SELECT * FROM measurements WHERE measurement_id = ?", (measurement["measurement_id"],)
+            f"SELECT {', '.join(columns)} FROM measurements WHERE measurement_id = ?", (measurement["measurement_id"],)
         ).fetchone()
 
     saved = dict(row)
@@ -206,22 +235,39 @@ def save_measurement(measurement):
     return saved, cursor.rowcount == 1
 
 
+def set_measurements_deleted(ids, *, deleted):
+    placeholders = ",".join("?" for _ in ids)
+    state = "IS NULL" if deleted else "IS NOT NULL"
+    with connect_database() as database:
+        rows = database.execute(
+            f"UPDATE measurements SET deleted_at = ? WHERE measurement_id IN ({placeholders}) AND deleted_at {state} RETURNING measurement_id",
+            (utc_now() if deleted else None, *ids),
+        ).fetchall()
+    return [row["measurement_id"] for row in rows]
+
+
 def list_measurements(limit, profile):
+    # ponytail: a weight band cannot distinguish similar weights; add explicit assignment when needed.
+    bounds = (profile.get("weight_min_g", 1), profile.get("weight_max_g", 500_000))
     with connect_database() as database:
         rows = database.execute(
             """
             SELECT measurement_id, device_id, measured_at, received_at, weight_g, impedance_raw
             FROM measurements
+            WHERE deleted_at IS NULL AND weight_g BETWEEN ? AND ?
             ORDER BY measured_at DESC, received_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (*bounds, limit),
         ).fetchall()
-        total = database.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
+        total = database.execute(
+            "SELECT COUNT(*) FROM measurements WHERE deleted_at IS NULL AND weight_g BETWEEN ? AND ?", bounds
+        ).fetchone()[0]
         cutoff = (datetime.now(timezone.utc) - timedelta(days=372)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         activity = database.execute(
-            "SELECT measured_at, weight_g FROM measurements WHERE measured_at >= ? ORDER BY measured_at",
-            (cutoff,),
+            "SELECT measured_at, weight_g FROM measurements "
+            "WHERE deleted_at IS NULL AND weight_g BETWEEN ? AND ? AND measured_at >= ? ORDER BY measured_at",
+            (*bounds, cutoff),
         ).fetchall()
     return [dict(row) | estimate_body_metrics(row, profile) for row in rows], total, [dict(row) for row in activity]
 
@@ -261,6 +307,13 @@ class ScaleHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise ClientError("request body is not valid JSON") from error
 
+    def authenticate(self):
+        if API_TOKEN and hmac.compare_digest(self.headers.get("X-API-Key", "").encode(), API_TOKEN.encode()):
+            return True
+        self.close_connection = True
+        self.send_json(401, {"error": "invalid API token"})
+        return False
+
     def do_GET(self):
         parsed = urlsplit(self.path)
         if parsed.path == "/healthz":
@@ -297,28 +350,43 @@ class ScaleHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/measurements":
+            query = parse_qs(parsed.query)
             try:
-                limit = int(parse_qs(parsed.query).get("limit", ["100"])[0])
+                limit = int(query.get("limit", ["100"])[0])
                 if not 1 <= limit <= 500:
                     raise ValueError
             except ValueError:
                 self.send_json(400, {"error": "limit must be an integer between 1 and 500"})
                 return
-            measurements, total, activity = list_measurements(limit, self.server.profile)
+            include_excluded = query.get("include_excluded", ["0"])[0]
+            if include_excluded not in {"0", "1"}:
+                self.send_json(400, {"error": "include_excluded must be 0 or 1"})
+                return
+            profile = self.server.profile
+            if include_excluded == "1":
+                if not self.authenticate():
+                    return
+                profile = profile | {"weight_min_g": 1, "weight_max_g": 500_000}
+            measurements, total, activity = list_measurements(limit, profile)
             self.send_json(200, {"measurements": measurements, "total": total, "activity_measurements": activity})
             return
 
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if urlsplit(self.path).path != "/api/measurements":
+        path = urlsplit(self.path).path
+        if path not in {"/api/measurements", "/api/measurements/delete", "/api/measurements/restore"}:
             self.send_json(404, {"error": "not found"})
             return
-        if not API_TOKEN or not hmac.compare_digest(self.headers.get("X-API-Key", ""), API_TOKEN):
-            self.close_connection = True
-            self.send_json(401, {"error": "invalid API token"})
+        if not self.authenticate():
             return
         try:
+            if path != "/api/measurements":
+                ids = validate_measurement_ids(self.read_json())
+                deleting = path == "/api/measurements/delete"
+                changed = set_measurements_deleted(ids, deleted=deleting)
+                self.send_json(200, {"deleted" if deleting else "restored": len(changed), "measurement_ids": changed})
+                return
             measurement = validate_measurement(self.read_json())
             saved, created = save_measurement(measurement)
         except ClientError as error:
